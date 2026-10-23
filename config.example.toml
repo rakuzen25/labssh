@@ -1,0 +1,32 @@
+# Copy to %APPDATA%/labssh/config.toml on Windows, or
+# $XDG_CONFIG_HOME/labssh/config.toml (~/.config/labssh/config.toml) on POSIX.
+# Existing SSH configuration supplies all credentials and jump-host routing.
+[[hosts]]
+alias = "brooks"
+pool = "servers"
+preferred = true
+
+[[hosts]]
+alias = "moore"
+pool = "servers"
+preferred = true
+
+[[hosts]]
+alias = "hanlon"
+pool = "servers"
+
+[[hosts]]
+alias = "finagle"
+pool = "servers"
+
+# Add additional [[hosts]] blocks with pool = "other" for --pool all.
+# Without a custom config, all 22 desktops and both Amdahl hosts are included.
+
+[ranking]
+cpu_weight = 0.6
+memory_weight = 0.3
+response_weight = 0.1
+memory_full = 0.2
+response_fast = 0.2
+response_slow = 2.0
+tie_fraction = 0.05
