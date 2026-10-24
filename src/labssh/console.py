@@ -77,7 +77,8 @@ class Console:
             key = msvcrt.getwch()
             if key in ("\x00", "\xe0"):
                 msvcrt.getwch()
-                return None
+                # Preserve input detection even for keys without menu actions.
+                return "\x00"
             return key
         if select.select([sys.stdin], [], [], 0)[0]:
             return sys.stdin.read(1)

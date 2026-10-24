@@ -226,7 +226,7 @@ class PresentationTests(unittest.TestCase):
             patch.object(self.state, "close"),
             patch.object(self.state, "save"),
             patch.object(cli.time, "sleep"),
-            patch.object(cli.time, "monotonic", side_effect=[0, 0, 0.4, 1.1, 1.2]),
+            patch.object(cli.time, "monotonic", side_effect=[0, 0, 0, 0.4, 1.1, 1.2]),
         ):
             self.assertIsNone(cli.run_menu(self.state))
         # Initial paint, initial scan paint, then one clock tick; not every poll.

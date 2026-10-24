@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import queue
 import shutil
 import sys
@@ -231,10 +232,11 @@ class Selection:
 
 def run_menu(state):
     typed, message = "", ""
+    auto_at = time.monotonic() + 3
     # Paint pending/cached rows before launching any probe process.
     with Console() as console:
         try:
-            console.draw(state)
+            console.draw(state, "", "Auto-connect in 3s; any key cancels")
             state.refresh(startup=True)
             dirty = True
             size = shutil.get_terminal_size()
@@ -250,10 +252,18 @@ def run_menu(state):
                     size = current_size
                     dirty = True
                 if dirty:
-                    console.draw(state, typed, message)
+                    auto_message = (
+                        f"Auto-connect in {max(0, math.ceil(auto_at - now))}s; any key cancels"
+                        if auto_at is not None and now < auto_at
+                        else "Waiting for recommendation; any key cancels"
+                        if auto_at is not None
+                        else message
+                    )
+                    console.draw(state, typed, auto_message)
                     dirty = False
                 key = console.key()
                 if key is not None:
+                    auto_at = None
                     dirty = True
                     if key in ("q", "Q", "\x03", "\x1b", "\x04", ""):
                         return None
@@ -283,6 +293,10 @@ def run_menu(state):
                         else:
                             state.refresh()
                         typed, message = "", ""
+                elif auto_at is not None and now >= auto_at:
+                    best = state.recommendation()
+                    if best is not None:
+                        return best
                 time.sleep(0.025)
         finally:
             state.close()

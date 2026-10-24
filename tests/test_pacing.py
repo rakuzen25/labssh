@@ -278,7 +278,7 @@ class ScannerTests(TestWorkspace):
             self.assertFalse(scanner.thread.is_alive())
 
     def test_menu_finishes_cleanup_before_ssh_handoff(self):
-        for phase in ("pacing", "active"):
+        for phase in ("pacing", "active", "automatic"):
             with self.subTest(phase=phase):
                 self.check_menu_handoff(phase)
 
@@ -306,6 +306,8 @@ class ScannerTests(TestWorkspace):
                 )
             state.path = self.path
             state.scanner = scanner
+            if phase == "automatic":
+                state.metrics[aliases[0]] = observation()
             keys = iter(["1", "\r"])
 
             class FakeConsole:
@@ -319,7 +321,7 @@ class ScannerTests(TestWorkspace):
                     pass
 
                 def key(self):
-                    return next(keys)
+                    return None if phase == "automatic" else next(keys)
 
             def connect(*args):
                 self.assertFalse(scanner.thread.is_alive())
@@ -336,6 +338,7 @@ class ScannerTests(TestWorkspace):
                 patch.object(cli, "load_config", return_value=(hosts, core.Ranking())),
                 patch.object(cli.shutil, "which", return_value="ssh"),
                 patch.object(cli, "connect", side_effect=connect),
+                patch.object(cli.time, "monotonic", side_effect=[0, 0, 3, 3]),
                 patch.object(state, "refresh"),
                 patch("sys.stdin.isatty", return_value=True),
                 patch("sys.stdout.isatty", return_value=True),

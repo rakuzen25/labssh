@@ -66,7 +66,11 @@ OpenSSH joins remote-command arguments with spaces. See the
 The menu appears immediately. Cached metrics are labeled with their age and expire
 after five minutes. Startup fills missing or expired measurements only for hosts
 in the `servers` pool, even with `--pool all`. Results and the recommendation
-update live; host numbers stay fixed.
+update live; host numbers stay fixed. With no keyboard input, the menu connects
+to the current recommendation after three seconds. Any key permanently cancels
+auto-connect for that menu session. If no recommendation is available yet, it
+waits for one; you can still press any key to cancel. All probe processes and
+workers are stopped before the SSH connection starts.
 
 | Key | Action |
 | --- | --- |

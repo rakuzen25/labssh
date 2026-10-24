@@ -139,18 +139,19 @@ class ProbeProcess:
     def __init__(self, command: list[str]) -> None:
         self.job: Any = None
         self.closed = False
-        kwargs: dict[str, Any] = {
-            "stdin": subprocess.DEVNULL,
-            "stdout": subprocess.PIPE,
-            "stderr": subprocess.PIPE,
-        }
-        if os.name == "nt":
-            kwargs["creationflags"] = (
-                subprocess.CREATE_NO_WINDOW | 0x4
-            )  # CREATE_SUSPENDED
-        else:
-            kwargs["start_new_session"] = True
-        self.process: subprocess.Popen[bytes] = subprocess.Popen(command, **kwargs)
+        self.process: subprocess.Popen[bytes] = subprocess.Popen(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=False,
+            creationflags=(
+                subprocess.CREATE_NO_WINDOW | 0x4  # CREATE_SUSPENDED
+                if os.name == "nt"
+                else 0
+            ),
+            start_new_session=os.name != "nt",
+        )
         if os.name == "nt":
             try:
                 self.job = kernel.CreateJobObjectW(None, None)
@@ -385,8 +386,8 @@ class Scanner:
                 with self.lock:
                     process.close()
                     self.active = None
-                if process.process.poll() is None:
-                    process.process.communicate()
+                # Also drain/close pipes when an earlier read failed after exit.
+                process.process.communicate()
         label = "ready" if result.outcome == Outcome.SUCCESS else "error"
         self._status(alias, label, result.message)
         return result
