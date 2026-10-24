@@ -6,6 +6,7 @@ import os
 import queue
 import signal
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -40,7 +41,7 @@ OPTIONS = [
 ]
 
 
-def parse_metrics(output, seconds):
+def parse_metrics(output: str, seconds: float) -> Metrics:
     lines = output.splitlines()
     try:
         start = lines.index("LABSSH1")
@@ -63,7 +64,7 @@ def parse_metrics(output, seconds):
         raise ValueError("Malformed or unsupported Linux metrics") from exc
 
 
-def error_reason(stderr):
+def error_reason(stderr: str) -> str:
     lowered = stderr.lower()
     for needle, label in (
         ("host key", "Host key not trusted/changed; try manual SSH"),
@@ -79,7 +80,7 @@ def error_reason(stderr):
     return clean[-120:] or "SSH probe failed"
 
 
-if os.name == "nt":
+if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
 
@@ -139,20 +140,21 @@ class ProbeProcess:
     def __init__(self, command: list[str]) -> None:
         self.job: Any = None
         self.closed = False
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = subprocess.CREATE_NO_WINDOW | 0x4  # CREATE_SUSPENDED
         self.process: subprocess.Popen[bytes] = subprocess.Popen(
             command,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=False,
-            creationflags=(
-                subprocess.CREATE_NO_WINDOW | 0x4  # CREATE_SUSPENDED
-                if os.name == "nt"
-                else 0
-            ),
-            start_new_session=os.name != "nt",
+            creationflags=creationflags,
+            start_new_session=sys.platform != "win32",
         )
-        if os.name == "nt":
+        if sys.platform == "win32":
+            import ctypes
+
             try:
                 self.job = kernel.CreateJobObjectW(None, None)
                 if not self.job:
@@ -175,11 +177,11 @@ class ProbeProcess:
                 self.process.communicate()
                 raise
 
-    def close(self):
+    def close(self) -> None:
         if self.closed:
             return
         self.closed = True
-        if os.name == "nt":
+        if sys.platform == "win32":
             if self.job:
                 kernel.CloseHandle(self.job)
                 self.job = None
@@ -214,8 +216,8 @@ class Scanner:
         self.stop = threading.Event()
         self.lock = threading.Lock()
         self.active: ProbeProcess | None = None
-        self.pending: dict[str, tuple[Host, bool, float]] = {}
-        self.requested: set[str] = set()
+        self.pending: dict[str, tuple[Host, float]] = {}
+        self.requested: dict[str, bool] = {}
         self.statuses: dict[str, ProbeStatus] = {}
         self.pause_until = 0.0
         self.interval = 2.0
@@ -234,13 +236,16 @@ class Scanner:
             if self.done.is_set() or self.stop.is_set():
                 return False
             self.interval = max(self.interval, interval)
-            for alias, (host, requested_force, gap) in list(self.pending.items()):
-                self.pending[alias] = (host, requested_force, max(interval, gap))
+            for alias, (host, gap) in list(self.pending.items()):
+                self.pending[alias] = (host, max(interval, gap))
             for host in hosts:
                 if host.alias not in self.requested:
-                    self.requested.add(host.alias)
-                    self.pending[host.alias] = (host, force, interval)
+                    self.pending[host.alias] = (host, interval)
                     self.statuses[host.alias] = ProbeStatus("queued")
+                # Upgrade an automatic request without queuing a second probe.
+                self.requested[host.alias] = force or self.requested.get(
+                    host.alias, False
+                )
         return True
 
     def snapshot(self) -> dict[str, ProbeStatus]:
@@ -268,9 +273,9 @@ class Scanner:
                         self.done.set()
                         return
                     alias = next(iter(self.pending))
-                    host, force, interval = self.pending.pop(alias)
+                    host, interval = self.pending.pop(alias)
                 try:
-                    result = self._host(host, force, interval)
+                    result = self._host(host, interval)
                 except (OSError, ValueError) as exc:
                     # Coordination errors fail closed; never fall back to an
                     # uncoordinated subprocess or reset the persistent limits.
@@ -287,22 +292,23 @@ class Scanner:
         finally:
             self.done.set()
 
-    def _host(self, host: Host, force: bool, interval: float) -> ProbeResult:
+    def _host(self, host: Host, interval: float) -> ProbeResult:
         alias = host.alias
         slot = self.coordinator.slot
         while not self.stop.is_set():
             if not slot.acquire(self.stop):
                 break
             try:
+                with self.lock:
+                    force = self.requested[alias]
+                    interval = max(interval, self.interval)
                 # Recheck after acquiring the cross-process slot: another
                 # window may have measured this host while we were waiting.
                 metrics = read_cache(self.path).get(alias)
                 if not force and metrics is not None:
                     self._status(alias, "cached")
                     return ProbeResult(alias, Outcome.SUCCESS, metrics)
-                with self.lock:
-                    interval = max(interval, self.interval)
-                decision = self.coordinator.reserve(alias, interval)
+                decision = self.coordinator.reserve(alias, interval, force=force)
                 if decision.paused:
                     self._status(alias, "cooldown", "Probing paused", decision.retry_at)
                     self._pause(decision.retry_at)
@@ -403,9 +409,9 @@ class Scanner:
         self.coordinator.slot.release()
 
 
-def connect(destination, arguments, ssh="ssh"):
+def connect(destination: str, arguments: list[str], ssh: str = "ssh") -> int:
     command = [ssh, destination, *arguments]
-    if os.name != "nt":
+    if sys.platform != "win32":
         os.execvp(ssh, command)
     # Windows needs a parent to preserve the child's exit code. Ctrl+C is also
     # delivered to the inherited-console SSH child; avoid killing it ourselves.

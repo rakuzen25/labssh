@@ -51,8 +51,9 @@ the same alias that appears in the menu:
 3. Put required identity, port, and proxy settings in your SSH configuration.
    Flags after labssh’s `--`, including `-F`, `-J`, `-p`, and `-i`, affect only the
    final connection. They do not configure probes.
-4. After the cooldown ends, press `r` to retry, or select a host number for manual
+4. Press `r` to retry after fixing the problem, or select a host number for manual
    SSH. Manual connections can prompt normally.
+   If a shared timeout pause is active, wait for its countdown before retrying probes.
 
 If the cause remains unclear, `ssh -v brooks` provides native SSH diagnostics.
 
@@ -77,11 +78,13 @@ Startup scans only missing or expired measurements in the `servers` pool. With
 with `p` changes the display without starting a scan.
 
 A queued row can be waiting for pacing or another local labssh instance. Each
-alias has a 60-second attempt cooldown. Two consecutive timeouts pause probing
+alias has a 60-second attempt cooldown for automatic probes. Explicit refresh with
+`r` or `--list` bypasses this cooldown and cached results, while retaining shared
+pacing. Two consecutive timeouts pause probing
 for five minutes across instances that share the cache directory. Cancelled
 probes retain their attempt cooldown.
 
-After a cooldown or pause expires, request another scan with `r` or `--list`.
+After a pause expires, request another scan with `r` or `--list`.
 There is no periodic scan. If no measurement is usable, type a host number and
 press Enter, or run `labssh brooks` to connect directly.
 

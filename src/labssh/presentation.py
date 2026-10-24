@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import os
 import time
 from io import StringIO
+from typing import TYPE_CHECKING, TextIO
 
 from rich.console import Console, Group
 from rich.table import Table
@@ -12,27 +14,40 @@ from rich.text import Text
 
 from .core import score
 
+if TYPE_CHECKING:
+    from .cli import Selection
 
-def clean(value):
+
+def clean(value: object) -> str:
     """Keep control characters and Rich markup out of terminal-supplied labels."""
     return "".join(c if c.isprintable() else " " for c in str(value))
 
 
-def focused_host(state, typed):
+def focused_host(state: Selection, typed: str) -> str | None:
     if typed and 1 <= int(typed) <= len(state.hosts):
         return state.hosts[int(typed) - 1].alias
     return state.recommendation()
 
 
-def menu(state, typed="", message="", *, width=80, height=24):
-    hosts = state.hosts
-    compute = state.mode == "compute"
-    best = state.recommendation()
-    focused = focused_host(state, typed)
+def header(state: Selection, width: int) -> Text:
     header = Text("Lab SSH", style="bold", no_wrap=True, overflow="ellipsis")
     mode = "resp" if width < 40 and state.mode == "responsive" else state.mode
     pool = "srv" if width < 40 and state.pool == "servers" else state.pool
     header.append(f"  {mode} / {pool}", style="dim")
+    return header
+
+
+def host_table(
+    state: Selection,
+    typed: str,
+    width: int,
+    best: str | None,
+    focused: str | None,
+    start: int,
+    end: int,
+) -> Table:
+    hosts = state.hosts
+    compute = state.mode == "compute"
 
     table = Table(
         box=None,
@@ -42,7 +57,7 @@ def menu(state, typed="", message="", *, width=80, height=24):
         header_style="dim",
         show_edge=False,
     )
-    table.add_column("#", width=len(str(len(hosts))) + 1, no_wrap=True)
+    table.add_column("#", width=len(str(len(hosts))) + 2, no_wrap=True)
     table.add_column("Host", ratio=1, min_width=4, no_wrap=True, overflow="ellipsis")
     if width >= 55:
         table.add_column(
@@ -63,10 +78,6 @@ def menu(state, typed="", message="", *, width=80, height=24):
     if width >= 70:
         table.add_column("State", width=10, no_wrap=True)
 
-    available = max(1, height - 6)
-    index = next((i for i, host in enumerate(hosts) if host.alias == focused), 0)
-    start = max(0, min(index - available + 1, len(hosts) - available))
-    end = min(len(hosts), start + available)
     for number, host in enumerate(hosts[start:end], start + 1):
         alias = host.alias
         metrics = state.metrics.get(alias)
@@ -76,7 +87,11 @@ def menu(state, typed="", message="", *, width=80, height=24):
             " bold underline" if typed and alias == focused else ""
         )
         cells = [
-            Text(f"{'›' if alias == best else ' '}{number}", style=preferred_style),
+            Text(
+                f"{'›' if alias == best else ' '}{number}"
+                f"{'*' if typed and alias == focused else ' '}",
+                style=host_style.strip(),
+            ),
             Text(clean(alias), style=host_style.strip()),
         ]
         if width >= 55:
@@ -117,13 +132,12 @@ def menu(state, typed="", message="", *, width=80, height=24):
                 )
             )
         table.add_row(*cells)
+    return table
 
+
+def host_detail(state: Selection, focused: str | None) -> Text:
     detail = Text(no_wrap=True, overflow="ellipsis")
-    if message:
-        detail.append(clean(message), style="yellow")
-    elif state.notice:
-        detail.append(clean(state.notice), style="red")
-    elif focused:
+    if focused:
         detail.append(clean(focused), style="bold")
         error = state.errors.get(focused)
         metrics = state.metrics.get(focused)
@@ -132,7 +146,7 @@ def menu(state, typed="", message="", *, width=80, height=24):
         elif metrics:
             age = max(0, int(time.time() - metrics.timestamp))
             cached = " · cached" if focused in state.cached else ""
-            if compute:
+            if state.mode == "compute":
                 memory_percent = metrics.available_kib / metrics.total_kib * 100
                 detail.append(
                     f"  {metrics.cpus} CPUs · load {metrics.load:.2f} · "
@@ -148,21 +162,35 @@ def menu(state, typed="", message="", *, width=80, height=24):
             if swap:
                 detail.append(f" · swap {swap / 1048576:.1f} GiB", style="dim")
         else:
-            detail.append("  checking", style="yellow")
+            detail.append("  " + clean(state.status_for(focused).label), style="dim")
     else:
         detail.append(
             "Choose a number or press r",
             style="yellow",
         )
+    return detail
 
-    pause = max(0, int(state.pause_until - time.time()))
+
+def session_status(state: Selection, message: str) -> Text:
+    status = Text(no_wrap=True, overflow="ellipsis")
+    pause = max(0, math.ceil(state.pause_until - time.time()))
+    pause_text = f"Probes paused · retry in {pause // 60}m {pause % 60:02d}s"
+    status.append(
+        clean(state.notice or (pause_text if pause else message)),
+        style="red" if state.notice else "yellow",
+    )
     if pause:
-        detail.append(f" · probes paused {pause}s", style="yellow")
+        extra = pause_text if state.notice else clean(message)
+        if extra:
+            status.append(" · " + extra, style="yellow")
+    return status
 
+
+def controls(typed: str, width: int) -> Text:
     footer = Text(no_wrap=True, overflow="ellipsis")
     if typed:
         footer.append(f"[{typed}] ", style="bold")
-    controls = (
+    keys = (
         ("Enter", " connect"),
         ("#", " choose"),
         ("m", " mode"),
@@ -170,13 +198,44 @@ def menu(state, typed="", message="", *, width=80, height=24):
         ("r", " refresh"),
         ("q", " quit"),
     )
-    for i, (key, label) in enumerate(controls):
+    for i, (key, label) in enumerate(keys):
         if i:
             footer.append(" " if width < 40 else "  ", style="dim")
         footer.append(key, style="bold")
         if width >= 65:
             footer.append(label, style="dim")
-    rows = [header, Text(""), table]
+    return footer
+
+
+def menu(
+    state: Selection,
+    typed: str = "",
+    message: str = "",
+    *,
+    width: int = 80,
+    height: int = 24,
+) -> Group:
+    title, footer = header(state, width), controls(typed, width)
+    if height < 7:
+        return Group(
+            *[title, Text("Enlarge terminal", style="yellow"), footer][:height]
+        )
+    hosts = state.hosts
+    best = state.recommendation()
+    focused = focused_host(state, typed)
+    # Header, table heading, details, status, controls; reserve an indicator
+    # only when rows are hidden. Spend spare height on spacing, never rows.
+    spacing = int(len(hosts) + 6 <= height)
+    available = height - 5 - spacing
+    if len(hosts) > available:
+        available -= 1
+    index = next((i for i, host in enumerate(hosts) if host.alias == focused), 0)
+    start = max(0, min(index - available + 1, len(hosts) - available))
+    end = min(len(hosts), start + available)
+    rows: list[Text | Table] = [title]
+    if spacing:
+        rows.append(Text(""))
+    rows.append(host_table(state, typed, width, best, focused, start, end))
     if len(hosts) > available:
         rows.append(
             Text(
@@ -186,28 +245,41 @@ def menu(state, typed="", message="", *, width=80, height=24):
                 overflow="ellipsis",
             )
         )
-    rows.extend([detail, footer])
-    if height < 7:
-        return Group(header, Text("Enlarge terminal", style="yellow"), footer)
+    rows.extend([host_detail(state, focused), session_status(state, message), footer])
     return Group(*rows)
 
 
+def make_console(
+    *, file: TextIO | None = None, width: int | None = None, height: int | None = None
+) -> Console:
+    # color_system=None suppresses attributes as well as colors while leaving
+    # Live's cursor controls enabled on the real terminal.
+    return Console(
+        force_terminal=True,
+        color_system="standard" if "NO_COLOR" not in os.environ else None,
+        highlight=False,
+        markup=False,
+        legacy_windows=False,
+        file=file,
+        width=width,
+        height=height,
+    )
+
+
 class MenuRenderer:
-    def render(self, state, typed="", message="", *, width=80, height=24):
+    """Offline rendering of the same composition used by the live display."""
+
+    def render(
+        self,
+        state: Selection,
+        typed: str = "",
+        message: str = "",
+        *,
+        width: int = 80,
+        height: int = 24,
+    ) -> str:
         output = StringIO()
-        # NO_COLOR disables styles as well as colors; cursor control remains in
-        # the outer console, where it is needed to maintain the live screen.
-        color = "NO_COLOR" not in os.environ
-        console = Console(
-            file=output,
-            width=width,
-            height=height,
-            force_terminal=color,
-            color_system="standard" if color else None,
-            highlight=False,
-            markup=False,
-            legacy_windows=False,
-        )
+        console = make_console(file=output, width=width, height=height)
         console.print(
             menu(state, typed, message, width=width, height=height),
             end="",

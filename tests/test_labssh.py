@@ -1,18 +1,20 @@
 import json
 import queue
+import shutil
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from typing import Self
 from unittest.mock import patch
 
 from labssh import cli, core, transport
-from labssh.coordination import Outcome, ProbeResult
+from labssh.coordination import Outcome, ProbeResult, ProbeStatus
 
 
-def metric(**overrides):
-    values = {
+def metric(**overrides: object) -> core.Metrics:
+    values: dict[str, object] = {
         "cpus": 8,
         "load": 0.0,
         "total_kib": 1000,
@@ -27,25 +29,25 @@ def metric(**overrides):
 
 
 class RankingTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self) -> None:
         self.hosts = [
             core.Host("brooks", preferred=True),
             core.Host("moore", preferred=True),
             core.Host("other"),
         ]
 
-    def test_full_headroom(self):
+    def test_full_headroom(self) -> None:
         self.assertAlmostEqual(core.score(metric(), "responsive", core.Ranking()), 100)
 
-    def test_cpu_pressure(self):
+    def test_cpu_pressure(self) -> None:
         self.assertEqual(core.score(metric(load=16), "responsive", core.Ranking()), 40)
 
-    def test_memory_pressure(self):
+    def test_memory_pressure(self) -> None:
         self.assertEqual(
             core.score(metric(available_kib=0), "responsive", core.Ranking()), 70
         )
 
-    def test_compute_capacity_and_memory(self):
+    def test_compute_capacity_and_memory(self) -> None:
         self.assertEqual(
             core.score(metric(cpus=128, load=28), "compute", core.Ranking()), 100
         )
@@ -56,23 +58,23 @@ class RankingTests(unittest.TestCase):
             50,
         )
 
-    def test_preference_within_margin(self):
+    def test_preference_within_margin(self) -> None:
         rows = core.ranked(self.hosts, {"brooks": metric(load=0.4), "other": metric()})
         self.assertEqual(rows[0][0].alias, "brooks")
 
-    def test_no_preference_outside_margin(self):
+    def test_no_preference_outside_margin(self) -> None:
         rows = core.ranked(self.hosts, {"brooks": metric(load=2), "other": metric()})
         self.assertEqual(rows[0][0].alias, "other")
 
-    def test_brooks_and_moore_equal_preference(self):
+    def test_brooks_and_moore_equal_preference(self) -> None:
         rows = core.ranked(self.hosts, {"brooks": metric(load=0.4), "moore": metric()})
         self.assertEqual(rows[0][0].alias, "moore")
 
-    def test_exact_tie_inventory_order(self):
+    def test_exact_tie_inventory_order(self) -> None:
         rows = core.ranked(self.hosts, {h.alias: metric() for h in self.hosts})
         self.assertEqual([h.alias for h, _ in rows], ["brooks", "moore", "other"])
 
-    def test_compute_preference_boundary(self):
+    def test_compute_preference_boundary(self) -> None:
         rows = core.ranked(
             self.hosts,
             {"brooks": metric(cpus=96), "other": metric(cpus=100)},
@@ -86,7 +88,7 @@ class RankingTests(unittest.TestCase):
         )
         self.assertEqual(rows[0][0].alias, "other")
 
-    def test_zero_scores_and_empty(self):
+    def test_zero_scores_and_empty(self) -> None:
         self.assertEqual(core.ranked(self.hosts, {}), [])
         rows = core.ranked(
             self.hosts, {h.alias: metric(load=1000) for h in self.hosts}, "compute"
@@ -95,7 +97,7 @@ class RankingTests(unittest.TestCase):
 
 
 class CacheConfigTests(unittest.TestCase):
-    def test_cache_expiry_corruption_and_future(self):
+    def test_cache_expiry_corruption_and_future(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "cache.json"
             core.write_cache(
@@ -112,13 +114,15 @@ class CacheConfigTests(unittest.TestCase):
             path.write_text("[]")
             self.assertEqual(core.read_cache(path), {})
 
-    def test_cache_write_failure_is_optional(self):
+    def test_cache_write_failure_is_optional(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "file"
             path.write_text("file blocks parent directory")
             core.write_cache(path / "metrics.json", {"brooks": metric()})
 
-    def test_cache_ignores_oversized_numeric_entry_and_keeps_valid_entries(self):
+    def test_cache_ignores_oversized_numeric_entry_and_keeps_valid_entries(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "cache.json"
             valid = vars(metric())
@@ -126,7 +130,7 @@ class CacheConfigTests(unittest.TestCase):
             path.write_text(json.dumps({"valid": valid, "invalid": invalid}))
             self.assertEqual(set(core.read_cache(path)), {"valid"})
 
-    def test_oversized_ranking_setting_is_rejected_as_invalid(self):
+    def test_oversized_ranking_setting_is_rejected_as_invalid(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.toml"
             path.write_text(
@@ -135,7 +139,7 @@ class CacheConfigTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Invalid ranking settings"):
                 core.load_config(path)
 
-    def test_invalid_metrics(self):
+    def test_invalid_metrics(self) -> None:
         for overrides in (
             {"cpus": 0},
             {"load": float("nan")},
@@ -152,7 +156,7 @@ class CacheConfigTests(unittest.TestCase):
             ):
                 metric(**overrides)
 
-    def test_custom_inventory_and_settings(self):
+    def test_custom_inventory_and_settings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.toml"
             path.write_text(
@@ -167,17 +171,20 @@ class CacheConfigTests(unittest.TestCase):
 
 
 class InterfaceTests(unittest.TestCase):
-    def test_menu_startup_error_closes_scanner_and_restores_console(self):
-        events = []
+    def test_menu_startup_error_closes_scanner_and_restores_console(self) -> None:
+        events: list[str] = []
+
+        def refresh(*, startup: bool = False) -> None:
+            events.append("started")
 
         class FakeConsole:
-            def __enter__(self):
+            def __enter__(self) -> Self:
                 return self
 
-            def __exit__(self, *args):
+            def __exit__(self, *args: object) -> None:
                 events.append("restored")
 
-            def draw(self, *args):
+            def draw(self, *args: object) -> None:
                 pass
 
         with patch.object(cli, "read_cache", return_value={}):
@@ -186,11 +193,9 @@ class InterfaceTests(unittest.TestCase):
             )
         with (
             patch.object(cli, "Console", FakeConsole),
+            patch.object(state, "refresh", side_effect=refresh),
             patch.object(
-                state, "refresh", side_effect=lambda **kw: events.append("started")
-            ),
-            patch.object(
-                cli.shutil, "get_terminal_size", side_effect=OSError("startup failure")
+                shutil, "get_terminal_size", side_effect=OSError("startup failure")
             ),
             patch.object(state, "close", side_effect=lambda: events.append("closed")),
             self.assertRaisesRegex(OSError, "startup failure"),
@@ -198,13 +203,13 @@ class InterfaceTests(unittest.TestCase):
             cli.run_menu(state)
         self.assertEqual(events, ["started", "closed", "restored"])
 
-    def test_list_startup_error_closes_selection(self):
+    def test_list_startup_error_closes_selection(self) -> None:
         with patch.object(cli, "read_cache", return_value={}):
             state = cli.Selection(
                 [core.Host("a")], core.Ranking(), "responsive", "servers", "ssh"
             )
         with (
-            patch.object(cli.shutil, "which", return_value="ssh"),
+            patch.object(shutil, "which", return_value="ssh"),
             patch.object(
                 cli, "load_config", return_value=(state.inventory, state.settings)
             ),
@@ -216,7 +221,7 @@ class InterfaceTests(unittest.TestCase):
             self.assertEqual(cli.main(["--list"]), 2)
         close.assert_called_once()
 
-    def test_boundary_preserves_arguments(self):
+    def test_boundary_preserves_arguments(self) -> None:
         args, forwarded = cli.arguments(
             [
                 "brooks",
@@ -231,13 +236,13 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(args.destination, "brooks")
         self.assertEqual(forwarded, ["-XY", "-o", "RemoteCommand=echo hello"])
 
-    def test_ssh_flags_require_boundary(self):
+    def test_ssh_flags_require_boundary(self) -> None:
         with patch("sys.stderr"), self.assertRaises(SystemExit):
             cli.arguments(["-XY"])
 
-    def test_explicit_host_bypasses_inventory_and_probes(self):
+    def test_explicit_host_bypasses_inventory_and_probes(self) -> None:
         with (
-            patch.object(cli.shutil, "which", return_value="ssh"),
+            patch.object(shutil, "which", return_value="ssh"),
             patch.object(cli, "connect", return_value=42) as connect,
         ):
             with patch.object(
@@ -246,15 +251,15 @@ class InterfaceTests(unittest.TestCase):
                 self.assertEqual(cli.main(["user@host", "--", "-tt", "hostname"]), 42)
             connect.assert_called_once_with("user@host", ["-tt", "hostname"], "ssh")
 
-    def test_redirected_menu_rejected(self):
+    def test_redirected_menu_rejected(self) -> None:
         with (
-            patch.object(cli.shutil, "which", return_value="ssh"),
+            patch.object(shutil, "which", return_value="ssh"),
             patch("sys.stdin.isatty", return_value=False),
             patch("sys.stderr"),
         ):
             self.assertEqual(cli.main([]), 2)
 
-    def test_live_recommendation_and_failed_cache_removal(self):
+    def test_live_recommendation_and_failed_cache_removal(self) -> None:
         hosts = [
             core.Host("brooks", preferred=True),
             core.Host("moore", preferred=True),
@@ -266,7 +271,7 @@ class InterfaceTests(unittest.TestCase):
             results: queue.Queue[ProbeResult] = queue.Queue()
             pause_until = 0
 
-            def snapshot(self):
+            def snapshot(self) -> dict[str, ProbeStatus]:
                 return {}
 
         scanner = FakeScanner()
@@ -282,23 +287,23 @@ class InterfaceTests(unittest.TestCase):
         self.assertIn("2 moore", lines[3])
         self.assertNotIn("brooks", state.metrics)
 
-    def test_menu_mode_pool_manual_selection_and_cleanup(self):
+    def test_menu_mode_pool_manual_selection_and_cleanup(self) -> None:
         hosts = [core.Host("brooks"), core.Host("desktop", "other")]
         with patch.object(cli, "read_cache", return_value={}):
             state = cli.Selection(hosts, core.Ranking(), "responsive", "servers", "ssh")
         keys = iter(["m", "p", "2", "\r"])
 
         class FakeConsole:
-            def __enter__(self):
+            def __enter__(self) -> Self:
                 return self
 
-            def __exit__(self, *args):
+            def __exit__(self, *args: object) -> None:
                 pass
 
-            def draw(self, *args):
+            def draw(self, *args: object) -> None:
                 pass
 
-            def key(self):
+            def key(self) -> str | None:
                 return next(keys)
 
         with (
@@ -307,7 +312,7 @@ class InterfaceTests(unittest.TestCase):
             patch.object(state, "collect", return_value=False),
             patch.object(state, "close") as close,
             patch.object(state, "save"),
-            patch.object(cli.time, "sleep"),
+            patch.object(time, "sleep"),
         ):
             self.assertEqual(cli.run_menu(state), "desktop")
             self.assertEqual(state.mode, "compute")
@@ -315,18 +320,18 @@ class InterfaceTests(unittest.TestCase):
 
 
 class TransportTests(unittest.TestCase):
-    def test_parse_metrics_with_banner(self):
+    def test_parse_metrics_with_banner(self) -> None:
         output = "Welcome\nLABSSH1\n8\n0.25 0.5 1 1/2 3\nMemTotal: 1000\nMemAvailable: 800\nSwapTotal: 100\nSwapFree: 99\n"
         self.assertEqual(transport.parse_metrics(output, 0.3).cpus, 8)
         with self.assertRaises(ValueError):
             transport.parse_metrics("LABSSH1\n8\n", 0.1)
 
-    def test_probe_options_disable_side_effects(self):
+    def test_probe_options_disable_side_effects(self) -> None:
         self.assertIn("-oStrictHostKeyChecking=yes", transport.OPTIONS)
         self.assertIn("-oClearAllForwardings=yes", transport.OPTIONS)
         self.assertIn("-oRemoteCommand=none", transport.OPTIONS)
 
-    def test_error_categories(self):
+    def test_error_categories(self) -> None:
         for source, wanted in (
             ("Host key verification failed", "Host key"),
             ("Permission denied (publickey)", "Authentication"),
@@ -335,7 +340,7 @@ class TransportTests(unittest.TestCase):
         ):
             self.assertIn(wanted, transport.error_reason(source))
 
-    def test_process_cancellation(self):
+    def test_process_cancellation(self) -> None:
         process = transport.ProbeProcess(
             [sys.executable, "-c", "import time; time.sleep(30)"]
         )
@@ -345,7 +350,7 @@ class TransportTests(unittest.TestCase):
         self.assertLess(time.perf_counter() - start, 1)
         process.close()  # idempotent
 
-    def test_process_tree_cleanup(self):
+    def test_process_tree_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / "child-survived"
             child = f"import time; from pathlib import Path; time.sleep(1); Path({str(marker)!r}).write_text('bad')"

@@ -20,4 +20,19 @@ build-backend = "uv_build"
 source-include = ["tests/**", "tools/**", "docs/**", "config.example.toml"]
 
 [dependency-groups]
-dev = ["mypy>=2.4.0", "ruff>=0.17.2"]
+dev = [
+    "basedpyright>=1.40.2",
+    "mypy>=2.4.0",
+    "ruff>=0.17.2",
+]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+
+[tool.basedpyright]
+include = ["src", "tests", "tools"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"

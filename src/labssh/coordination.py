@@ -44,7 +44,7 @@ class ProbeStatus:
 class GateState:
     last_start: float = 0
     interval: float = 0
-    attempts: dict[str, float] = field(default_factory=dict)
+    attempts: dict[str, float] = field(default_factory=dict[str, float])
     timeouts: int = 0
     pause_until: float = 0
 
@@ -76,8 +76,8 @@ class Coordinator:
             ) from exc
         try:
             state = GateState(**raw)
-            values = [state.last_start, state.interval, state.pause_until]
-            if not isinstance(state.attempts, dict):
+            values: list[object] = [state.last_start, state.interval, state.pause_until]
+            if not isinstance(raw.get("attempts", {}), dict):
                 raise TypeError("Invalid attempts")
             values.extend(state.attempts.values())
             if (
@@ -88,7 +88,7 @@ class Coordinator:
                 )
                 or type(state.timeouts) is not int
                 or state.timeouts < 0
-                or any(not isinstance(alias, str) for alias in state.attempts)
+                or any(not isinstance(alias, str) for alias in raw.get("attempts", {}))
             ):
                 raise ValueError("Invalid pacing data")
             return state
@@ -97,13 +97,13 @@ class Coordinator:
                 "Probe coordination state is invalid; probing disabled"
             ) from exc
 
-    def reserve(self, alias: str, interval: float) -> Decision:
+    def reserve(self, alias: str, interval: float, *, force: bool = False) -> Decision:
         state = self.read()
         now = self.clock()
         if state.pause_until > now:
             return Decision(retry_at=state.pause_until, paused=True)
         previous = state.attempts.get(alias)
-        if previous is not None and previous + 60 > now:
+        if not force and previous is not None and previous + 60 > now:
             return Decision(retry_at=previous + 60)
         earliest = state.last_start + max(state.interval, interval)
         if state.last_start and earliest > now:

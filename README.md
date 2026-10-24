@@ -83,9 +83,11 @@ workers are stopped before the SSH connection starts.
 
 Mode and pool choices reset on the next launch.
 
-The green marker identifies the recommendation. Typing a number shows that host's
-details beneath the table: SSH timing in responsive mode, CPU/load/RAM in compute
-mode, and measurement age or errors in either mode. Columns adapt to terminal
+The green `›` marker identifies the recommendation; `*` marks a typed selection.
+Typing a number shows that host's details beneath the table: SSH timing in
+responsive mode, CPU/load/RAM in compute mode, and measurement age or errors in
+either mode. A separate status line keeps countdowns and notices visible alongside
+host details. Columns adapt to terminal
 width; in short windows, typing a host number brings its row into view. Set
 `NO_COLOR` to disable styling. Rich loads only when opening the interactive menu.
 
@@ -93,9 +95,10 @@ Failed hosts can be selected manually. Probes never prompt for authentication or
 accept new host keys. Manual/native SSH can prompt normally. A failed probe does
 not prove a host is down. Redirected input/output requires `--list` or a destination.
 `--list` explicitly requests a scan of the chosen pool and prints results when it
-finishes or stops. It respects all traffic limits; exit code 1 means no usable
-metrics are available. Cached metrics can remain usable during a refresh cooldown.
-After a cooldown or pause ends, press `r` or run `--list` again to request a scan;
+finishes or stops. Like `r`, it bypasses cache freshness and the per-host attempt
+cooldown, while keeping shared pacing and timeout pauses; exit code 1 means no
+usable metrics are available. Cached metrics can remain usable during a pause.
+After a pause ends, press `r` or run `--list` again to request a scan;
 expired measurements do not trigger periodic probes.
 
 Use `--mode compute` to rank estimated parallel-build capacity; the default
@@ -159,9 +162,14 @@ From the repository root, run the local checks and build the package:
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy src/labssh tests tools
+uv run basedpyright
 uv run python -m unittest discover -s tests -v
 uv build
 ```
+
+Mypy and BasedPyright both use strict checking. BasedPyright reads its source paths
+and Python 3.13 settings from `pyproject.toml`; its development dependency includes
+the Node runtime, so no separate npm setup is needed.
 
 Tests cover ranking, cache handling, SSH argument preservation, menu transitions,
 probe failures, cross-process exclusion, fake-clock pacing, shared cooldowns, and

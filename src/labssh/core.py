@@ -9,8 +9,10 @@ import sys
 import threading
 import time
 import tomllib
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from .locking import FileLock, atomic_json
 
@@ -64,7 +66,7 @@ class Metrics:
     timestamp: float
 
     @classmethod
-    def checked(cls, values):
+    def checked(cls, values: Mapping[str, Any]) -> Metrics:
         result = cls(**values)
         if (
             type(result.cpus) is not int
@@ -85,7 +87,7 @@ class Metrics:
             or any(
                 not isinstance(value, (int, float))
                 or not 0 <= value <= sys.float_info.max
-                for value in (result.load, result.seconds, result.timestamp)
+                for value in (values["load"], values["seconds"], values["timestamp"])
             )
         ):
             raise ValueError("Invalid metrics")
@@ -103,7 +105,7 @@ class Ranking:
     tie_fraction: float = 0.05
 
 
-def config_dir():
+def config_dir() -> Path:
     if sys.platform == "win32":
         return (
             Path(os.environ.get("APPDATA", Path.home() / "AppData/Roaming")) / "labssh"
@@ -111,7 +113,7 @@ def config_dir():
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "labssh"
 
 
-def cache_path():
+def cache_path() -> Path:
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
     elif sys.platform == "darwin":
@@ -121,7 +123,7 @@ def cache_path():
     return base / "labssh/metrics.json"
 
 
-def load_config(path: Path):
+def load_config(path: Path) -> tuple[list[Host], Ranking]:
     if not path.exists():
         return (
             [Host(h, preferred=h in ("brooks", "moore")) for h in SERVERS]
@@ -132,9 +134,9 @@ def load_config(path: Path):
     hosts = [Host(**item) for item in data["hosts"]]
     if not hosts or len({h.alias for h in hosts}) != len(hosts):
         raise ValueError("Inventory must contain unique hosts")
-    for host in hosts:
+    for host, item in zip(hosts, data["hosts"], strict=True):
         if (
-            not isinstance(host.alias, str)
+            not isinstance(item["alias"], str)
             or not host.alias
             or host.alias.startswith("-")
             or any(c.isspace() or not c.isprintable() for c in host.alias)
@@ -162,7 +164,7 @@ def load_config(path: Path):
     return hosts, ranking
 
 
-def score(m: Metrics, mode: str, settings: Ranking):
+def score(m: Metrics, mode: str, settings: Ranking) -> float:
     memory = min(1.0, m.available_kib / m.total_kib / settings.memory_full)
     if mode == "compute":
         return max(m.cpus - m.load, 0) * memory
@@ -182,7 +184,12 @@ def score(m: Metrics, mode: str, settings: Ranking):
     )
 
 
-def ranked(hosts, metrics, mode="responsive", settings=None):
+def ranked(
+    hosts: Sequence[Host],
+    metrics: Mapping[str, Metrics],
+    mode: str = "responsive",
+    settings: Ranking | None = None,
+) -> list[tuple[Host, float]]:
     settings = settings if settings is not None else Ranking()
     scored = [
         (host, score(metrics[host.alias], mode, settings), i)
@@ -200,9 +207,9 @@ def ranked(hosts, metrics, mode="responsive", settings=None):
     return [(host, value) for host, value, _ in near + rest]
 
 
-def read_cache(path, now=None):
+def read_cache(path: Path, now: float | None = None) -> dict[str, Metrics]:
     now = time.time() if now is None else now
-    found = {}
+    found: dict[str, Metrics] = {}
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
         for alias, values in raw.items():
@@ -217,7 +224,9 @@ def read_cache(path, now=None):
     return found
 
 
-def write_cache(path, metrics, stop: threading.Event | None = None) -> bool:
+def write_cache(
+    path: Path, metrics: Mapping[str, Metrics], stop: threading.Event | None = None
+) -> bool:
     lock = FileLock(path.with_suffix(".lock"))
     try:
         if not lock.acquire(stop):

@@ -25,7 +25,7 @@ from .core import (
 from .transport import Scanner, connect
 
 
-def arguments(argv):
+def arguments(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     boundary = argv.index("--") if "--" in argv else len(argv)
     parser = argparse.ArgumentParser(
         description="Live lab host selection. Put SSH arguments after --.",
@@ -71,10 +71,10 @@ class Selection:
         self._last_shared_check = 0.0
 
     @property
-    def hosts(self):
+    def hosts(self) -> list[Host]:
         return [h for h in self.inventory if self.pool == "all" or h.pool == "servers"]
 
-    def refresh(self, *, startup=False):
+    def refresh(self, *, startup: bool = False) -> None:
         hosts = (
             [
                 h
@@ -103,7 +103,7 @@ class Selection:
         )
 
     @property
-    def scan_done(self):
+    def scan_done(self) -> bool:
         return self.scanner is None or self.scanner.done.is_set()
 
     def status_for(self, alias: str) -> ProbeStatus:
@@ -120,7 +120,7 @@ class Selection:
             return ProbeStatus("cached" if alias in self.cached else "ready")
         return ProbeStatus("idle")
 
-    def collect(self):
+    def collect(self) -> bool:
         changed = False
         if self.scanner is not None:
             snapshot = self.scanner.snapshot()
@@ -171,7 +171,7 @@ class Selection:
                 changed = True
         return changed
 
-    def recommendation(self):
+    def recommendation(self) -> str | None:
         eligible = {
             alias: m
             for alias, m in self.metrics.items()
@@ -181,7 +181,7 @@ class Selection:
         rows = ranked(self.hosts, eligible, self.mode, self.settings)
         return rows[0][0].alias if rows else None
 
-    def lines(self, typed="", message=""):
+    def lines(self, typed: str = "", message: str = "") -> list[str]:
         best = self.recommendation()
         compute = self.mode == "compute"
         cpu_label = "Spare CPU" if compute else "Load/CPU"
@@ -219,20 +219,20 @@ class Selection:
         ]
         return lines
 
-    def save(self):
+    def save(self) -> None:
         # The worker persists each observation before releasing the shared slot.
         # Do not write an old UI snapshot over another window's invalidations.
         pass
 
-    def close(self):
+    def close(self) -> None:
         if self.scanner:
             self.scanner.close()
             self.scanner = None
 
 
-def run_menu(state):
+def run_menu(state: Selection) -> str | None:
     typed, message = "", ""
-    auto_at = time.monotonic() + 3
+    auto_at: float | None = time.monotonic() + 3
     # Paint pending/cached rows before launching any probe process.
     with Console() as console:
         try:
@@ -303,7 +303,7 @@ def run_menu(state):
             state.save()
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     args, ssh_args = arguments(list(sys.argv[1:] if argv is None else argv))
     ssh = shutil.which("ssh")
     if not ssh:
