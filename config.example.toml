@@ -1,6 +1,9 @@
 # Copy to %APPDATA%/labssh/config.toml on Windows, or
 # $XDG_CONFIG_HOME/labssh/config.toml (~/.config/labssh/config.toml) on POSIX.
 # Existing SSH configuration supplies all credentials and jump-host routing.
+# This file replaces the built-in inventory. Aliases must be unique; include at
+# least one servers host. pool defaults to "servers"; preferred defaults to false.
+# See docs/reference/configuration.md for the full schema and valid ranges.
 [[hosts]]
 alias = "brooks"
 pool = "servers"
@@ -23,10 +26,17 @@ pool = "servers"
 # Without a custom config, all 22 desktops and both Amdahl hosts are included.
 
 [ranking]
+# All ranking values must be finite, nonnegative numbers.
+# Responsiveness weights must total 1 (within floating-point tolerance).
 cpu_weight = 0.6
 memory_weight = 0.3
 response_weight = 0.1
+# Available-memory fraction that earns full credit in both modes: 0 < value <= 1.
 memory_full = 0.2
+# SSH command completion thresholds in seconds, used in responsive mode.
+# response_slow must be greater than response_fast.
 response_fast = 0.2
 response_slow = 2.0
+# Fraction below the best score treated as a near tie in either mode: 0 <= value <= 1.
+# Within this group, preferred hosts rank first; 0.05 means within 5% of the best.
 tie_fraction = 0.05
